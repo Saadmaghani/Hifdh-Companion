@@ -1,36 +1,35 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
-  <meta name="theme-color" content="#0d1a0f" />
-  <meta name="description" content="Spaced repetition Quran hifdh companion" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Hifdh" />
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+  <meta name="theme-color" content="#0d1a0f"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="Hifdh"/>
+  <meta name="description" content="Spaced repetition Quran hifdh companion"/>
   <title>Hifdh Companion — حِفْظُ القُرآن</title>
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
   <style>
-    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { height: 100%; background: #0d1a0f; color: #faf7f0; }
-    #root { min-height: 100vh; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    input::placeholder { color: #4b5563; }
-    input:focus { border-color: rgba(201,168,76,0.4) !important; }
-    ::-webkit-scrollbar { width: 4px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: rgba(201,168,76,0.2); border-radius: 4px; }
+    *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+    html,body{height:100%;background:#0d1a0f;color:#faf7f0}
+    #root{min-height:100vh}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+    input::placeholder{color:#4b5563}
+    ::-webkit-scrollbar{width:4px}
+    ::-webkit-scrollbar-track{background:transparent}
+    ::-webkit-scrollbar-thumb{background:rgba(201,168,76,.2);border-radius:4px}
   </style>
 </head>
 <body>
 <div id="root"></div>
-
 <script type="text/babel">
 const { useState, useEffect, useCallback, useRef } = React;
 
-// ─── Surah Database ────────────────────────────────────────────────────────
+// ── Surah list ──────────────────────────────────────────────────────────────
 const SURAHS = [
   {n:1,ar:"الفاتحة",en:"Al-Fatihah",meaning:"The Opening",v:7,j:1},
   {n:2,ar:"البقرة",en:"Al-Baqarah",meaning:"The Cow",v:286,j:1},
@@ -148,75 +147,179 @@ const SURAHS = [
   {n:114,ar:"الناس",en:"An-Nas",meaning:"Mankind",v:6,j:30},
 ];
 
-// ─── SM-2 Algorithm ────────────────────────────────────────────────────────
+// ── SM-2 ────────────────────────────────────────────────────────────────────
 function sm2(card, q) {
   let { interval=1, ef=2.5, reps=0 } = card;
   if (q >= 3) {
-    interval = reps===0 ? 1 : reps===1 ? 6 : Math.round(interval * ef);
-    ef = Math.max(1.3, ef + 0.1 - (5-q)*(0.08+(5-q)*0.02));
+    interval = reps===0?1:reps===1?6:Math.round(interval*ef);
+    ef = Math.max(1.3, ef+0.1-(5-q)*(0.08+(5-q)*0.02));
     reps++;
   } else { reps=0; interval=1; }
   const next = new Date();
-  next.setDate(next.getDate() + interval);
+  next.setDate(next.getDate()+interval);
   return { interval, ef, reps, nextReview: next.toISOString().split("T")[0] };
 }
 
 const todayStr = () => new Date().toISOString().split("T")[0];
-const daysUntil = d => Math.ceil((new Date(d) - new Date(todayStr())) / 86400000);
+const daysUntil = d => Math.ceil((new Date(d)-new Date(todayStr()))/86400000);
+const pick = arr => arr[Math.floor(Math.random()*arr.length)];
+const shuffle = arr => [...arr].sort(()=>Math.random()-0.5);
+const trunc = (s,n) => s.length>n ? s.slice(0,n).trim()+"…" : s;
 
-// ─── localStorage helpers ─────────────────────────────────────────────────
-const load = () => { try { return JSON.parse(localStorage.getItem("hifdh-v2")||"{}"); } catch { return {}; } };
-const persist = obj => { try { localStorage.setItem("hifdh-v2", JSON.stringify(obj)); } catch {} };
-const getKey = () => localStorage.getItem("hifdh-apikey")||"";
-const setKey = k => localStorage.setItem("hifdh-apikey", k);
+// ── Storage ─────────────────────────────────────────────────────────────────
+const load = () => { try { return JSON.parse(localStorage.getItem("hifdh-v3")||"{}"); } catch { return {}; } };
+const save = obj => { try { localStorage.setItem("hifdh-v3",JSON.stringify(obj)); } catch {} };
 
-// ─── Pattern Background ───────────────────────────────────────────────────
+// ── Verse cache ──────────────────────────────────────────────────────────────
+const verseCache = {};
+
+async function fetchSurah(n) {
+  if (verseCache[n]) return verseCache[n];
+  const r = await fetch(`https://api.alquran.cloud/v1/surah/${n}/en.hilali`);
+  const d = await r.json();
+  const ayahs = d.data.ayahs.map(a => ({
+    num: a.numberInSurah,
+    text: a.text.replace(/\s*\[.*?\]/g,"").trim() // strip footnote refs like [2:255]
+  }));
+  verseCache[n] = ayahs;
+  return ayahs;
+}
+
+// ── Quiz Generator — uses real Quran API data ─────────────────────────────
+async function buildQuiz(memorizedNums) {
+  const types = ["next_verse","identify_surah","surah_meaning","creative"];
+  const type = pick(types);
+
+  if (type === "surah_meaning") {
+    // Pure local data — no API needed
+    const s = SURAHS[pick(memorizedNums)-1];
+    const distractors = shuffle(SURAHS.filter(x=>x.n!==s.n)).slice(0,3).map(x=>x.meaning);
+    const opts = shuffle([s.meaning,...distractors]);
+    const ans = ["a","b","c","d"][opts.indexOf(s.meaning)];
+    return {
+      type:"surah_meaning",
+      question:`What is the meaning of the name "${s.en}" (${s.ar})?`,
+      options:{a:opts[0],b:opts[1],c:opts[2],d:opts[3]},
+      answer:ans,
+      explanation:`"${s.en}" means "${s.meaning}". It is Surah ${s.n} with ${s.v} verses in Juz ${s.j}.`
+    };
+  }
+
+  if (type === "creative") {
+    // Local data questions — verse count, juz, number
+    const mode = pick(["verse_count","juz","surah_number","which_juz"]);
+    if (mode === "verse_count") {
+      const s = SURAHS[pick(memorizedNums)-1];
+      const wrongs = shuffle([s.v-1,s.v+1,s.v+3,s.v-3,s.v+5,s.v-5].filter(x=>x>0&&x!==s.v)).slice(0,3);
+      const opts = shuffle([s.v,...wrongs]);
+      const ans = ["a","b","c","d"][opts.indexOf(s.v)];
+      return {
+        type:"creative",
+        question:`How many verses does Surah ${s.en} (${s.ar}) contain?`,
+        options:{a:String(opts[0]),b:String(opts[1]),c:String(opts[2]),d:String(opts[3])},
+        answer:ans,
+        explanation:`Surah ${s.en} contains ${s.v} verses and is Surah number ${s.n} in the Quran.`
+      };
+    }
+    if (mode === "juz") {
+      const s = SURAHS[pick(memorizedNums)-1];
+      const wrongs = shuffle([...new Set([s.j-1,s.j+1,s.j+2,s.j-2].filter(x=>x>=1&&x<=30&&x!==s.j))]).slice(0,3);
+      if (wrongs.length < 3) wrongs.push(...[1,5,15,20,29].filter(x=>x!==s.j&&!wrongs.includes(x)));
+      const pool = [s.j,...wrongs.slice(0,3)];
+      const opts = shuffle(pool);
+      const ans = ["a","b","c","d"][opts.indexOf(s.j)];
+      return {
+        type:"creative",
+        question:`In which Juz (part) of the Quran is Surah ${s.en} (${s.ar}) found?`,
+        options:{a:`Juz ${opts[0]}`,b:`Juz ${opts[1]}`,c:`Juz ${opts[2]}`,d:`Juz ${opts[3]}`},
+        answer:ans,
+        explanation:`Surah ${s.en} is found in Juz ${s.j}. It has ${s.v} verses and is Surah number ${s.n}.`
+      };
+    }
+    // surah_number or which_juz — name → number
+    const s = SURAHS[pick(memorizedNums)-1];
+    const others = shuffle(memorizedNums.filter(x=>x!==s.n)).slice(0,3).map(x=>SURAHS[x-1]);
+    const pool = shuffle([s,...others]);
+    const ans = ["a","b","c","d"][pool.indexOf(s)];
+    return {
+      type:"creative",
+      question:`Which surah comes directly after Surah ${SURAHS[s.n-2]?.en || "Al-Fatihah"} in the Quran?`,
+      options:{a:pool[0].en,b:pool[1].en,c:pool[2].en,d:pool[3].en},
+      answer:ans,
+      explanation:`Surah ${s.en} (${s.ar}) is number ${s.n} in the Quran, following Surah ${SURAHS[s.n-2]?.en||"Al-Fatihah"}.`
+    };
+  }
+
+  // For next_verse and identify_surah we fetch real verse data
+  const surahNum = pick(memorizedNums);
+  const s = SURAHS[surahNum-1];
+  const ayahs = await fetchSurah(surahNum);
+
+  if (type === "next_verse" && ayahs.length > 2) {
+    // Pick a verse that has a "next" verse (not the last)
+    const idx = Math.floor(Math.random()*(ayahs.length-1)); // 0 to len-2
+    const cur = ayahs[idx];
+    const nxt = ayahs[idx+1];
+    // Get 3 distractor verses from other surahs or later verses
+    let distractors = ayahs.filter((_,i)=>i!==idx+1&&i!==idx).map(a=>a.text);
+    if (distractors.length < 3) {
+      // fallback: fetch another surah
+      try {
+        const other = pick(memorizedNums.filter(x=>x!==surahNum));
+        const otherAyahs = await fetchSurah(other);
+        distractors = [...distractors, ...otherAyahs.map(a=>a.text)];
+      } catch {}
+    }
+    const wrongOpts = shuffle(distractors).slice(0,3).map(t=>trunc(t,120));
+    const correctOpt = trunc(nxt.text, 120);
+    const opts = shuffle([correctOpt,...wrongOpts]);
+    const ans = ["a","b","c","d"][opts.indexOf(correctOpt)];
+    return {
+      type:"next_verse",
+      question:`In Surah ${s.en}, verse ${cur.num} reads (Hilali & Khan):\n\n"${trunc(cur.text,140)}"\n\nWhat comes next (verse ${nxt.num})?`,
+      options:{a:opts[0],b:opts[1],c:opts[2],d:opts[3]},
+      answer:ans,
+      explanation:`This is Surah ${s.en} (${s.ar}), verse ${nxt.num}. The verse follows directly after verse ${cur.num} in the same surah.`
+    };
+  }
+
+  // identify_surah
+  const ayah = pick(ayahs);
+  const otherNums = shuffle(memorizedNums.filter(x=>x!==surahNum)).slice(0,3);
+  // If not enough memorized surahs, pick random other surahs
+  while (otherNums.length < 3) {
+    const r = Math.floor(Math.random()*114)+1;
+    if (!otherNums.includes(r) && r!==surahNum) otherNums.push(r);
+  }
+  const others = otherNums.slice(0,3).map(x=>SURAHS[x-1].en);
+  const opts = shuffle([s.en,...others]);
+  const ans = ["a","b","c","d"][opts.indexOf(s.en)];
+  return {
+    type:"identify_surah",
+    question:`Which surah does this verse (Hilali & Khan translation) come from?\n\n"${trunc(ayah.text,160)}"`,
+    options:{a:opts[0],b:opts[1],c:opts[2],d:opts[3]},
+    answer:ans,
+    explanation:`This is verse ${ayah.num} of Surah ${s.en} (${s.ar}), meaning "${s.meaning}". It is Surah ${s.n} with ${s.v} verses in Juz ${s.j}.`
+  };
+}
+
+// ── Pattern ──────────────────────────────────────────────────────────────────
 const PatternBg = () => (
   <svg style={{position:"fixed",inset:0,width:"100%",height:"100%",opacity:0.055,pointerEvents:"none",zIndex:0}} xmlns="http://www.w3.org/2000/svg">
     <defs>
       <pattern id="g" x="0" y="0" width="60" height="60" patternUnits="userSpaceOnUse">
         <polygon points="30,2 57,17 57,43 30,58 3,43 3,17" fill="none" stroke="#c9a84c" strokeWidth="0.9"/>
         <polygon points="30,12 47,22 47,38 30,48 13,38 13,22" fill="none" stroke="#c9a84c" strokeWidth="0.4"/>
-        <line x1="30" y1="2" x2="30" y2="12" stroke="#c9a84c" strokeWidth="0.4"/>
-        <line x1="57" y1="17" x2="47" y2="22" stroke="#c9a84c" strokeWidth="0.4"/>
-        <line x1="57" y1="43" x2="47" y2="38" stroke="#c9a84c" strokeWidth="0.4"/>
-        <line x1="30" y1="58" x2="30" y2="48" stroke="#c9a84c" strokeWidth="0.4"/>
-        <line x1="3" y1="43" x2="13" y2="38" stroke="#c9a84c" strokeWidth="0.4"/>
-        <line x1="3" y1="17" x2="13" y2="22" stroke="#c9a84c" strokeWidth="0.4"/>
+        {[["30,2","30,12"],["57,17","47,22"],["57,43","47,38"],["30,58","30,48"],["3,43","13,38"],["3,17","13,22"]].map(([p1,p2],i)=>(
+          <line key={i} x1={p1.split(",")[0]} y1={p1.split(",")[1]} x2={p2.split(",")[0]} y2={p2.split(",")[1]} stroke="#c9a84c" strokeWidth="0.4"/>
+        ))}
       </pattern>
     </defs>
     <rect width="100%" height="100%" fill="url(#g)"/>
   </svg>
 );
 
-// ─── API Key Modal ─────────────────────────────────────────────────────────
-function KeyModal({ existing, onSave, onClose }) {
-  const [k, setK] = useState(existing);
-  return (
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-      <div style={{background:"#0d2a18",border:"1px solid rgba(201,168,76,0.35)",borderRadius:20,padding:28,maxWidth:380,width:"100%"}}>
-        <div style={{textAlign:"center",marginBottom:16}}>
-          <div style={{fontSize:32,marginBottom:6}}>🔑</div>
-          <div style={{color:"#c9a84c",fontFamily:"Georgia,serif",fontSize:18,marginBottom:6}}>Anthropic API Key</div>
-          <p style={{color:"#9ca3af",fontSize:13,lineHeight:1.7}}>
-            Daily questions use Claude AI. Get a free key at{" "}
-            <a href="https://console.anthropic.com" target="_blank" rel="noreferrer" style={{color:"#c9a84c"}}>console.anthropic.com</a>.
-            Stored only in your browser.
-          </p>
-        </div>
-        <input value={k} onChange={e=>setK(e.target.value)} type="password" placeholder="sk-ant-api03-..."
-          style={{background:"rgba(255,255,255,0.07)",border:"1px solid rgba(255,255,255,0.15)",borderRadius:10,
-            padding:"11px 14px",color:"#faf7f0",fontSize:13,width:"100%",fontFamily:"monospace",marginBottom:14,outline:"none"}}/>
-        <div style={{display:"flex",gap:10}}>
-          <button onClick={onClose} style={{flex:1,background:"transparent",border:"1px solid #374151",borderRadius:10,padding:10,color:"#6b7280",cursor:"pointer",fontSize:13}}>Cancel</button>
-          <button onClick={()=>onSave(k.trim())} style={{flex:2,...G.goldBtn}}>Save Key</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Main App ──────────────────────────────────────────────────────────────
+// ── App ──────────────────────────────────────────────────────────────────────
 function App() {
   const [tab, setTab] = useState("home");
   const [mem, setMem] = useState({});
@@ -228,89 +331,58 @@ function App() {
   const [search, setSearch] = useState("");
   const [juzF, setJuzF] = useState(null);
   const [toast, setToast] = useState(null);
-  const [showKey, setShowKey] = useState(false);
-  const [apiKey, setApiKey] = useState("");
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     const d = load();
     if (d.mem) setMem(d.mem);
-    if (d.quiz && d.quiz.date === todayStr()) {
+    if (d.quiz && d.quiz.date===todayStr()) {
       setQuiz(d.quiz.data);
-      setAnswered(d.quiz.answered ?? null);
+      setAnswered(d.quiz.answered??null);
     }
-    setApiKey(getKey());
     setReady(true);
   }, []);
 
-  const save = useCallback((m, q) => persist({ mem:m, quiz:q }), []);
-
-  const notify = (msg, type="ok") => {
-    setToast({msg,type});
-    setTimeout(() => setToast(null), 2500);
-  };
+  const persist = useCallback((m,q) => save({mem:m,quiz:q}), []);
+  const notify = (msg,type="ok") => { setToast({msg,type}); setTimeout(()=>setToast(null),2500); };
 
   const nums = Object.keys(mem).map(Number);
-  const due = nums.filter(n => !mem[n].nextReview || mem[n].nextReview <= todayStr());
+  const due = nums.filter(n=>!mem[n].nextReview||mem[n].nextReview<=todayStr());
 
   const addSurah = n => {
-    const m2 = {...mem, [n]:{interval:1,ef:2.5,reps:0,nextReview:todayStr(),added:todayStr()}};
-    setMem(m2); save(m2, quiz ? {date:todayStr(),data:quiz,answered} : null);
+    const m2={...mem,[n]:{interval:1,ef:2.5,reps:0,nextReview:todayStr(),added:todayStr()}};
+    setMem(m2); persist(m2, quiz?{date:todayStr(),data:quiz,answered}:null);
     notify(`${SURAHS[n-1].en} added!`);
   };
   const removeSurah = n => {
     const m2={...mem}; delete m2[n];
-    setMem(m2); save(m2, quiz ? {date:todayStr(),data:quiz,answered} : null);
+    setMem(m2); persist(m2, quiz?{date:todayStr(),data:quiz,answered}:null);
     notify("Removed","info");
   };
-  const doReview = (n, q) => {
-    const card = mem[n]||{};
-    const up = sm2(card, q);
-    const m2 = {...mem,[n]:{...card,...up,lastReview:todayStr()}};
-    setMem(m2); setReviewDone({q, next:up.nextReview, interval:up.interval});
-    save(m2, quiz ? {date:todayStr(),data:quiz,answered} : null);
+  const doReview = (n,q) => {
+    const up=sm2(mem[n]||{},q);
+    const m2={...mem,[n]:{...mem[n],...up,lastReview:todayStr()}};
+    setMem(m2); setReviewDone({q,next:up.nextReview,interval:up.interval});
+    persist(m2, quiz?{date:todayStr(),data:quiz,answered}:null);
   };
 
   const genQuiz = async () => {
-    if (!apiKey) { setShowKey(true); return; }
     if (!nums.length) return;
     setQuizLoading(true); setQuiz(null); setAnswered(null);
-    const types = ["next_verse","identify_surah","surah_meaning","creative"];
-    const type = types[Math.floor(Math.random()*types.length)];
-    const list = nums.map(n=>{const s=SURAHS[n-1];return `${s.n}. ${s.en} (${s.ar}) — "${s.meaning}" — ${s.v} verses`;}).join("\n");
-    const prompts = {
-      next_verse:"Quote 5-10 words from a memorized surah (Al-Hilali & Khan translation) and ask what the NEXT verse's translation is. 4 options: correct continuation + 3 plausible wrong ones.",
-      identify_surah:"Give the Al-Hilali & Khan translation of a verse and ask which surah it's from. 4 surah name options.",
-      surah_meaning:"Ask what a surah's name means, or which surah's name means [meaning]. 4 options.",
-      creative:"Ask something creative but not too hard: verse count, juz number, a prophet mentioned, a key theme, a repeated phrase. 4 options."
-    };
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages",{
-        method:"POST",
-        headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-        body:JSON.stringify({
-          model:"claude-sonnet-4-20250514", max_tokens:900,
-          messages:[{role:"user",content:`Quran hifdh teacher. Student memorized:\n${list}\n\n${prompts[type]}\n\nUse Al-Hilali & Khan.\n\nRespond ONLY with JSON (no markdown):\n{"question":"...","options":{"a":"...","b":"...","c":"...","d":"..."},"answer":"a","explanation":"...","type":"${type}"}`}]
-        })
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error.message);
-      const text = data.content?.find(c=>c.type==="text")?.text||"";
-      const parsed = JSON.parse(text.replace(/```json|```/g,"").trim());
-      setQuiz(parsed);
-      save(mem,{date:todayStr(),data:parsed,answered:null});
+      const q = await buildQuiz(nums);
+      setQuiz(q);
+      persist(mem,{date:todayStr(),data:q,answered:null});
     } catch(e) {
-      setQuiz({error:true,question:e.message||"Failed. Check your API key."});
+      setQuiz({error:true,question:"Could not load question. Check your internet connection.",options:{a:"",b:"",c:"",d:""},answer:"a",explanation:""});
     }
     setQuizLoading(false);
   };
 
   const answerQuiz = opt => {
     setAnswered(opt);
-    save(mem,{date:todayStr(),data:quiz,answered:opt});
+    persist(mem,{date:todayStr(),data:quiz,answered:opt});
   };
-
-  const saveApiKey = k => { setApiKey(k); setKey(k); setShowKey(false); notify("API key saved!"); };
 
   if (!ready) return (
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",flexDirection:"column",gap:16,background:"#0d1a0f"}}>
@@ -322,8 +394,7 @@ function App() {
   return (
     <div style={{background:"#0d1a0f",minHeight:"100vh",fontFamily:"'Segoe UI',system-ui,sans-serif",position:"relative"}}>
       <PatternBg/>
-      {toast && <div style={{position:"fixed",top:18,left:"50%",transform:"translateX(-50%)",background:toast.type==="info"?"#1a3a5c":"#14532d",color:"#faf7f0",padding:"9px 22px",borderRadius:12,fontSize:13,fontWeight:600,zIndex:300,boxShadow:"0 4px 20px rgba(0,0,0,0.5)",whiteSpace:"nowrap"}}>{toast.msg}</div>}
-      {showKey && <KeyModal existing={apiKey} onSave={saveApiKey} onClose={()=>setShowKey(false)}/>}
+      {toast&&<div style={{position:"fixed",top:18,left:"50%",transform:"translateX(-50%)",background:toast.type==="info"?"#1a3a5c":"#14532d",color:"#faf7f0",padding:"9px 22px",borderRadius:12,fontSize:13,fontWeight:600,zIndex:300,boxShadow:"0 4px 20px rgba(0,0,0,0.5)",whiteSpace:"nowrap"}}>{toast.msg}</div>}
 
       <div style={{maxWidth:480,margin:"0 auto",minHeight:"100vh",display:"flex",flexDirection:"column",position:"relative",zIndex:1}}>
         {/* Header */}
@@ -333,32 +404,25 @@ function App() {
               <div style={{fontFamily:"Georgia,serif",fontSize:21,color:"#c9a84c",letterSpacing:1}}>حِفْظُ القُرآن</div>
               <div style={{fontSize:10,color:"#6b7280",letterSpacing:2,marginTop:1}}>HIFDH COMPANION</div>
             </div>
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <button onClick={()=>setShowKey(true)} style={{background:"rgba(201,168,76,0.1)",border:"1px solid rgba(201,168,76,0.2)",borderRadius:8,padding:"5px 10px",color:"#c9a84c",fontSize:11,cursor:"pointer"}}>
-                🔑 {apiKey?"Key ✓":"Set Key"}
-              </button>
-              <div style={{textAlign:"center",background:"rgba(201,168,76,0.08)",borderRadius:10,padding:"6px 14px",border:"1px solid rgba(201,168,76,0.15)"}}>
-                <div style={{fontSize:10,color:"#c9a84c",letterSpacing:1}}>MEMORIZED</div>
-                <div style={{fontSize:26,fontWeight:700,color:"#faf7f0",lineHeight:1}}>{nums.length}</div>
-                <div style={{fontSize:10,color:"#a89060"}}>of 114</div>
-              </div>
+            <div style={{textAlign:"center",background:"rgba(201,168,76,0.08)",borderRadius:10,padding:"6px 14px",border:"1px solid rgba(201,168,76,0.15)"}}>
+              <div style={{fontSize:10,color:"#c9a84c",letterSpacing:1}}>MEMORIZED</div>
+              <div style={{fontSize:26,fontWeight:700,color:"#faf7f0",lineHeight:1}}>{nums.length}</div>
+              <div style={{fontSize:10,color:"#a89060"}}>of 114</div>
             </div>
           </div>
         </header>
 
-        {/* Page Content */}
         <div style={{flex:1,overflowY:"auto",paddingBottom:72}}>
-          {tab==="home" && <HomeTab nums={nums} due={due} mem={mem} quiz={quiz} quizLoading={quizLoading}
+          {tab==="home"&&<HomeTab nums={nums} due={due} mem={mem} quiz={quiz} quizLoading={quizLoading}
             answered={answered} reviewNum={reviewNum} reviewDone={reviewDone}
             onStartReview={n=>{setReviewNum(n);setReviewDone(null);}}
             onDoReview={doReview} onFinishReview={()=>{setReviewNum(null);setReviewDone(null);}}
-            onGenQuiz={genQuiz} onAnswer={answerQuiz} hasKey={!!apiKey} onSetKey={()=>setShowKey(true)}/>}
-          {tab==="surahs" && <SurahsTab mem={mem} search={search} setSearch={setSearch}
+            onGenQuiz={genQuiz} onAnswer={answerQuiz}/>}
+          {tab==="surahs"&&<SurahsTab mem={mem} search={search} setSearch={setSearch}
             juzF={juzF} setJuzF={setJuzF} onAdd={addSurah} onRemove={removeSurah}/>}
-          {tab==="stats" && <StatsTab mem={mem} nums={nums} due={due}/>}
+          {tab==="stats"&&<StatsTab mem={mem} nums={nums} due={due}/>}
         </div>
 
-        {/* Bottom Nav */}
         <nav style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:"#0d1a0f",borderTop:"1px solid rgba(255,255,255,0.07)",display:"flex",zIndex:20}}>
           {[{id:"home",icon:"🏠",label:"Home"},{id:"surahs",icon:"📖",label:"Surahs"},{id:"stats",icon:"📊",label:"Progress"}].map(({id,icon,label})=>(
             <button key={id} onClick={()=>setTab(id)} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"9px 0 11px",background:"transparent",border:"none",cursor:"pointer",color:tab===id?"#c9a84c":"#6b7280",borderTop:tab===id?"2px solid #c9a84c":"2px solid transparent"}}>
@@ -372,10 +436,10 @@ function App() {
   );
 }
 
-// ─── Home Tab ──────────────────────────────────────────────────────────────
-function HomeTab({nums,due,mem,quiz,quizLoading,answered,reviewNum,reviewDone,onStartReview,onDoReview,onFinishReview,onGenQuiz,onAnswer,hasKey,onSetKey}) {
+// ── Home Tab ─────────────────────────────────────────────────────────────────
+function HomeTab({nums,due,mem,quiz,quizLoading,answered,reviewNum,reviewDone,onStartReview,onDoReview,onFinishReview,onGenQuiz,onAnswer}) {
   if (reviewNum) {
-    const s = SURAHS[reviewNum-1];
+    const s=SURAHS[reviewNum-1];
     return (
       <div style={{padding:"22px 18px"}}>
         <div style={{background:"linear-gradient(135deg,#0d2a18,#0d1a0f)",border:"1px solid rgba(201,168,76,0.25)",borderRadius:20,padding:22}}>
@@ -386,29 +450,23 @@ function HomeTab({nums,due,mem,quiz,quizLoading,answered,reviewNum,reviewDone,on
             <div style={{fontSize:20,fontWeight:700,color:"#faf7f0"}}>{s.en}</div>
             <div style={{fontSize:12,color:"#9ca3af",marginTop:4}}>"{s.meaning}" · {s.v} verses · Juz {s.j}</div>
           </div>
-          {!reviewDone ? (
+          {!reviewDone?(
             <>
               <div style={{background:"rgba(201,168,76,0.07)",borderRadius:12,padding:14,marginBottom:18,border:"1px solid rgba(201,168,76,0.12)"}}>
                 <p style={{color:"#d1d5db",fontSize:13,lineHeight:1.7,margin:0}}>Recite from memory. Rate your recall when done:</p>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9}}>
-                {[{l:"Perfect 🌟",q:5,bg:"#14532d",b:"#22c55e"},{l:"Good 👍",q:4,bg:"#1e3a5f",b:"#3b82f6"},{l:"Hesitant 😐",q:3,bg:"#3f2a00",b:"#f59e0b"},{l:"Difficult 😓",q:2,bg:"#4a1515",b:"#ef4444"},{l:"Forgot 😔",q:0,bg:"#2d1515",b:"#b91c1c"}]
-                  .map(({l,q,bg,b})=>(
-                  <button key={q} onClick={()=>onDoReview(reviewNum,q)}
-                    style={{background:bg,border:`1px solid ${b}`,borderRadius:10,padding:"11px 6px",color:"#faf7f0",fontSize:13,cursor:"pointer",fontWeight:600,gridColumn:q===0?"span 2":undefined}}>
-                    {l}
-                  </button>
+                {[{l:"Perfect 🌟",q:5,bg:"#14532d",b:"#22c55e"},{l:"Good 👍",q:4,bg:"#1e3a5f",b:"#3b82f6"},{l:"Hesitant 😐",q:3,bg:"#3f2a00",b:"#f59e0b"},{l:"Difficult 😓",q:2,bg:"#4a1515",b:"#ef4444"},{l:"Forgot 😔",q:0,bg:"#2d1515",b:"#b91c1c"}].map(({l,q,bg,b})=>(
+                  <button key={q} onClick={()=>onDoReview(reviewNum,q)} style={{background:bg,border:`1px solid ${b}`,borderRadius:10,padding:"11px 6px",color:"#faf7f0",fontSize:13,cursor:"pointer",fontWeight:600,gridColumn:q===0?"span 2":undefined}}>{l}</button>
                 ))}
               </div>
             </>
-          ) : (
+          ):(
             <div style={{textAlign:"center"}}>
               <div style={{fontSize:44,marginBottom:10}}>{reviewDone.q>=4?"🌟":reviewDone.q>=3?"👍":"💪"}</div>
               <div style={{color:"#faf7f0",fontSize:16,fontWeight:700,marginBottom:6}}>{reviewDone.q>=4?"Excellent!":reviewDone.q>=3?"Well done!":"Keep practising!"}</div>
-              <div style={{color:"#9ca3af",fontSize:13,marginBottom:22}}>
-                Next review in <span style={{color:"#c9a84c",fontWeight:700}}>{reviewDone.interval} day{reviewDone.interval>1?"s":""}</span> · {reviewDone.next}
-              </div>
-              <button onClick={onFinishReview} style={{...G.goldBtn}}>Done ✓</button>
+              <div style={{color:"#9ca3af",fontSize:13,marginBottom:22}}>Next review in <span style={{color:"#c9a84c",fontWeight:700}}>{reviewDone.interval} day{reviewDone.interval>1?"s":""}</span> · {reviewDone.next}</div>
+              <button onClick={onFinishReview} style={G.goldBtn}>Done ✓</button>
             </div>
           )}
         </div>
@@ -416,40 +474,38 @@ function HomeTab({nums,due,mem,quiz,quizLoading,answered,reviewNum,reviewDone,on
     );
   }
 
+  const typeLabel = {next_verse:"Next Verse",identify_surah:"Identify Surah",surah_meaning:"Surah Meaning",creative:"Trivia"};
+
   return (
     <div style={{padding:"18px",display:"flex",flexDirection:"column",gap:18}}>
-      {/* Due */}
       <section>
-        <div style={G.secTitle}>
+        <div style={G.sec}>
           <span>📅</span> Due Today
           <span style={{marginLeft:"auto",background:"#c9a84c",color:"#0d1a0f",borderRadius:12,padding:"2px 10px",fontSize:12,fontWeight:700}}>{due.length}</span>
         </div>
-        {nums.length===0 ? (
+        {nums.length===0?(
           <div style={G.empty}><div style={{fontSize:38,marginBottom:10}}>📚</div><div style={{color:"#9ca3af",fontSize:13,textAlign:"center",lineHeight:1.7}}>Go to the Surahs tab to mark which ones you've memorised.</div></div>
-        ) : due.length===0 ? (
+        ):due.length===0?(
           <div style={G.empty}><div style={{fontSize:36,marginBottom:8}}>✅</div><div style={{color:"#6ee7b7",fontWeight:600,fontSize:14}}>All caught up!</div><div style={{color:"#9ca3af",fontSize:12,marginTop:3}}>No revisions due. Bārakallāhu fīk.</div></div>
-        ) : (
-          due.map(n=>{
-            const s=SURAHS[n-1],c=mem[n];
-            return (
-              <div key={n} style={{...G.row,marginBottom:9}}>
-                <div style={{flex:1}}>
-                  <div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontFamily:"Georgia,serif",fontSize:18,color:"#c9a84c"}}>{s.ar}</span><span style={{color:"#faf7f0",fontWeight:600,fontSize:14}}>{s.en}</span></div>
-                  <div style={{color:"#6b7280",fontSize:11,marginTop:2}}>{s.v}v · Rep {c.reps||0} · "{s.meaning}"</div>
-                </div>
-                <button onClick={()=>onStartReview(n)} style={{background:"rgba(201,168,76,0.15)",border:"1px solid rgba(201,168,76,0.3)",borderRadius:9,padding:"7px 13px",color:"#c9a84c",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Recite →</button>
+        ):due.map(n=>{
+          const s=SURAHS[n-1],c=mem[n];
+          return (
+            <div key={n} style={{...G.row,marginBottom:9}}>
+              <div style={{flex:1}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontFamily:"Georgia,serif",fontSize:18,color:"#c9a84c"}}>{s.ar}</span><span style={{color:"#faf7f0",fontWeight:600,fontSize:14}}>{s.en}</span></div>
+                <div style={{color:"#6b7280",fontSize:11,marginTop:2}}>{s.v}v · Rep {c.reps||0} · "{s.meaning}"</div>
               </div>
-            );
-          })
-        )}
+              <button onClick={()=>onStartReview(n)} style={{background:"rgba(201,168,76,0.15)",border:"1px solid rgba(201,168,76,0.3)",borderRadius:9,padding:"7px 13px",color:"#c9a84c",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Recite →</button>
+            </div>
+          );
+        })}
       </section>
 
-      {/* Upcoming */}
-      {nums.length>0 && (()=>{
-        const up = nums.filter(n=>mem[n].nextReview&&mem[n].nextReview>todayStr()).sort((a,b)=>mem[a].nextReview.localeCompare(mem[b].nextReview)).slice(0,3);
-        if (!up.length) return null;
+      {nums.length>0&&(()=>{
+        const up=nums.filter(n=>mem[n].nextReview&&mem[n].nextReview>todayStr()).sort((a,b)=>mem[a].nextReview.localeCompare(mem[b].nextReview)).slice(0,3);
+        if(!up.length) return null;
         return (<section>
-          <div style={G.secTitle}><span>🔜</span> Coming Up</div>
+          <div style={G.sec}><span>🔜</span> Coming Up</div>
           {up.map(n=>(
             <div key={n} style={{...G.row,opacity:0.7,marginBottom:8}}>
               <div style={{flex:1}}><span style={{color:"#faf7f0",fontSize:13}}>{SURAHS[n-1].en}</span><span style={{color:"#c9a84c",fontSize:12,marginLeft:8}}>({SURAHS[n-1].ar})</span></div>
@@ -459,35 +515,33 @@ function HomeTab({nums,due,mem,quiz,quizLoading,answered,reviewNum,reviewDone,on
         </section>);
       })()}
 
-      {/* Quiz */}
       <section>
-        <div style={G.secTitle}><span>🧠</span> Daily Question</div>
-        {nums.length===0 ? (
-          <div style={G.qCard}><div style={{color:"#6b7280",fontSize:13,textAlign:"center"}}>Add memorised surahs to unlock.</div></div>
-        ) : !hasKey ? (
+        <div style={G.sec}><span>🧠</span> Daily Question</div>
+        {nums.length===0?(
+          <div style={G.qCard}><div style={{color:"#6b7280",fontSize:13,textAlign:"center",padding:"10px 0"}}>Add memorised surahs to unlock questions.</div></div>
+        ):quizLoading?(
           <div style={G.qCard}>
-            <div style={{textAlign:"center",padding:"8px 0"}}>
-              <div style={{fontSize:34,marginBottom:10}}>🔑</div>
-              <p style={{color:"#9ca3af",fontSize:13,lineHeight:1.7,marginBottom:16}}>Add your Anthropic API key to get AI-generated daily questions.</p>
-              <button onClick={onSetKey} style={G.goldBtn}>Set API Key</button>
+            <div style={{textAlign:"center",padding:"20px 0"}}>
+              <div style={{fontSize:28,display:"inline-block",animation:"spin 1s linear infinite"}}>⚡</div>
+              <div style={{color:"#c9a84c",fontFamily:"Georgia,serif",fontSize:13,marginTop:10}}>Fetching verse data…</div>
+              <div style={{color:"#6b7280",fontSize:11,marginTop:4}}>Powered by alquran.cloud · Hilali & Khan</div>
             </div>
           </div>
-        ) : quizLoading ? (
-          <div style={G.qCard}><div style={{textAlign:"center",padding:"18px 0"}}><div style={{fontSize:30,display:"inline-block",animation:"spin 1s linear infinite"}}>⚡</div><div style={{color:"#c9a84c",fontFamily:"Georgia,serif",fontSize:13,marginTop:10}}>Generating question…</div></div></div>
-        ) : quiz && !quiz.error ? (
+        ):quiz&&!quiz.error?(
           <div style={G.qCard}>
             <div style={{marginBottom:12}}>
-              <span style={{background:"rgba(201,168,76,0.13)",color:"#c9a84c",fontSize:10,padding:"3px 9px",borderRadius:20,letterSpacing:1,fontWeight:700,textTransform:"uppercase"}}>{quiz.type?.replace(/_/g," ")||"Quiz"}</span>
+              <span style={{background:"rgba(201,168,76,0.13)",color:"#c9a84c",fontSize:10,padding:"3px 9px",borderRadius:20,letterSpacing:1,fontWeight:700,textTransform:"uppercase"}}>{typeLabel[quiz.type]||quiz.type}</span>
             </div>
-            <p style={{color:"#faf7f0",fontSize:14,fontWeight:500,lineHeight:1.65,marginBottom:14}}>{quiz.question}</p>
+            <p style={{color:"#faf7f0",fontSize:14,fontWeight:500,lineHeight:1.7,marginBottom:14,whiteSpace:"pre-wrap"}}>{quiz.question}</p>
             <div style={{display:"flex",flexDirection:"column",gap:7,marginBottom:14}}>
               {Object.entries(quiz.options||{}).map(([k,v])=>{
+                if(!v) return null;
                 const isCor=quiz.answer===k,isChos=answered===k;
-                let bg="rgba(255,255,255,0.04)",border="rgba(255,255,255,0.1)",col="#d1d5db";
-                if(answered){if(isCor){bg="rgba(34,197,94,0.12)";border="#22c55e";col="#6ee7b7";}else if(isChos){bg="rgba(239,68,68,0.12)";border="#ef4444";col="#fca5a5";}}
+                let bg="rgba(255,255,255,0.04)",brd="rgba(255,255,255,0.1)",col="#d1d5db";
+                if(answered){if(isCor){bg="rgba(34,197,94,0.12)";brd="#22c55e";col="#6ee7b7";}else if(isChos){bg="rgba(239,68,68,0.12)";brd="#ef4444";col="#fca5a5";}}
                 return (
                   <button key={k} disabled={!!answered} onClick={()=>onAnswer(k)}
-                    style={{background:bg,border:`1px solid ${border}`,borderRadius:9,padding:"10px 12px",textAlign:"left",color:col,cursor:answered?"default":"pointer",fontSize:13,lineHeight:1.5,display:"flex",gap:8,alignItems:"flex-start"}}>
+                    style={{background:bg,border:`1px solid ${brd}`,borderRadius:9,padding:"10px 12px",textAlign:"left",color:col,cursor:answered?"default":"pointer",fontSize:13,lineHeight:1.5,display:"flex",gap:8,alignItems:"flex-start"}}>
                     <span style={{fontWeight:700,minWidth:16,color:"#c9a84c"}}>{k.toUpperCase()}.</span>
                     <span style={{flex:1}}>{v}</span>
                     {answered&&isCor&&<span>✓</span>}
@@ -496,18 +550,19 @@ function HomeTab({nums,due,mem,quiz,quizLoading,answered,reviewNum,reviewDone,on
                 );
               })}
             </div>
-            {answered && <div style={{background:"rgba(201,168,76,0.07)",border:"1px solid rgba(201,168,76,0.18)",borderRadius:9,padding:"11px 13px",marginBottom:14}}>
+            {answered&&<div style={{background:"rgba(201,168,76,0.07)",border:"1px solid rgba(201,168,76,0.18)",borderRadius:9,padding:"11px 13px",marginBottom:14}}>
               <div style={{fontSize:10,color:"#c9a84c",letterSpacing:1,marginBottom:3}}>EXPLANATION</div>
               <div style={{color:"#d1d5db",fontSize:13,lineHeight:1.6}}>{quiz.explanation}</div>
             </div>}
-            <button onClick={onGenQuiz} style={{...G.goldBtn,fontSize:13,padding:"9px 18px"}}>{answered?"Next Question →":"New Question"}</button>
+            <button onClick={onGenQuiz} style={{...G.goldBtn,fontSize:13,padding:"9px 18px"}}>{answered?"New Question →":"Refresh"}</button>
           </div>
-        ) : (
+        ):(
           <div style={G.qCard}>
-            {quiz?.error&&<p style={{color:"#fca5a5",fontSize:12,marginBottom:10}}>{quiz.question}</p>}
-            <div style={{textAlign:"center",padding:"6px 0"}}>
+            {quiz?.error&&<p style={{color:"#fca5a5",fontSize:12,marginBottom:12}}>{quiz.question}</p>}
+            <div style={{textAlign:"center",padding:"8px 0"}}>
               <div style={{fontSize:34,marginBottom:10}}>🎯</div>
-              <p style={{color:"#9ca3af",fontSize:13,lineHeight:1.7,marginBottom:16}}>Test your knowledge with a daily question from your memorised surahs.</p>
+              <p style={{color:"#9ca3af",fontSize:13,lineHeight:1.7,marginBottom:4}}>Test your knowledge with a question from your memorised surahs.</p>
+              <p style={{color:"#6b7280",fontSize:11,marginBottom:16}}>Uses verified Hilali & Khan translation · No API key needed</p>
               <button onClick={onGenQuiz} style={G.goldBtn}>Generate Question ✨</button>
             </div>
           </div>
@@ -517,15 +572,15 @@ function HomeTab({nums,due,mem,quiz,quizLoading,answered,reviewNum,reviewDone,on
   );
 }
 
-// ─── Surahs Tab ───────────────────────────────────────────────────────────
+// ── Surahs Tab ────────────────────────────────────────────────────────────────
 function SurahsTab({mem,search,setSearch,juzF,setJuzF,onAdd,onRemove}) {
-  const [confirm,setConfirm] = useState(null);
-  const [showAll,setShowAll] = useState(false);
-  const filtered = SURAHS.filter(s=>
+  const [confirm,setConfirm]=useState(null);
+  const [showAll,setShowAll]=useState(false);
+  const filtered=SURAHS.filter(s=>
     (!search||s.en.toLowerCase().includes(search.toLowerCase())||s.ar.includes(search)||s.meaning.toLowerCase().includes(search.toLowerCase())||String(s.n).includes(search))&&
     (!juzF||s.j===juzF)
   );
-  const shown = showAll ? filtered : filtered.slice(0,30);
+  const shown=showAll?filtered:filtered.slice(0,30);
   return (
     <div style={{padding:"18px",display:"flex",flexDirection:"column",gap:14}}>
       <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search by name, meaning, or number…"
@@ -553,12 +608,12 @@ function SurahsTab({mem,search,setSearch,juzF,setJuzF,onAdd,onRemove}) {
                   {m&&c&&<span style={{color:isDue?"#f59e0b":"#6ee7b7",marginLeft:5}}>{isDue?"· Due ⚡":`· ${c.nextReview}`}</span>}
                 </div>
               </div>
-              {m ? (
+              {m?(
                 <button onClick={()=>{if(confirm===s.n){onRemove(s.n);setConfirm(null);}else{setConfirm(s.n);setTimeout(()=>setConfirm(x=>x===s.n?null:x),3000);}}}
                   style={{borderRadius:7,padding:"5px 9px",fontSize:11,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",border:"1px solid",color:confirm===s.n?"#fca5a5":"#6b7280",background:confirm===s.n?"#7f1d1d":"transparent",borderColor:confirm===s.n?"#ef4444":"#374151"}}>
                   {confirm===s.n?"Confirm?":"✓ Mem."}
                 </button>
-              ) : (
+              ):(
                 <button onClick={()=>onAdd(s.n)} style={{background:"rgba(201,168,76,0.1)",border:"1px solid rgba(201,168,76,0.25)",borderRadius:7,padding:"5px 10px",color:"#c9a84c",fontSize:11,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>+ Add</button>
               )}
             </div>
@@ -571,11 +626,11 @@ function SurahsTab({mem,search,setSearch,juzF,setJuzF,onAdd,onRemove}) {
   );
 }
 
-// ─── Stats Tab ────────────────────────────────────────────────────────────
+// ── Stats Tab ─────────────────────────────────────────────────────────────────
 function StatsTab({mem,nums,due}) {
-  const totalV = nums.reduce((a,n)=>a+SURAHS[n-1].v,0);
-  const juzSet = [...new Set(nums.map(n=>SURAHS[n-1].j))].length;
-  const avgInt = nums.length ? Math.round(nums.reduce((a,n)=>a+(mem[n].interval||1),0)/nums.length) : 0;
+  const totalV=nums.reduce((a,n)=>a+SURAHS[n-1].v,0);
+  const juzSet=[...new Set(nums.map(n=>SURAHS[n-1].j))].length;
+  const avgInt=nums.length?Math.round(nums.reduce((a,n)=>a+(mem[n].interval||1),0)/nums.length):0;
   const byJuz={};
   nums.forEach(n=>{const j=SURAHS[n-1].j;byJuz[j]=(byJuz[j]||0)+1;});
 
@@ -591,18 +646,16 @@ function StatsTab({mem,nums,due}) {
           </div>
         ))}
       </div>
-
       <div style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:14,padding:16}}>
-        <div style={G.secTitle}><span>📈</span> Overall Progress</div>
+        <div style={G.sec}><span>📈</span> Overall Progress</div>
         <div style={{background:"rgba(255,255,255,0.05)",borderRadius:8,height:10,overflow:"hidden",margin:"10px 0"}}>
           <div style={{background:"linear-gradient(90deg,#c9a84c,#f0c040)",height:"100%",width:`${(nums.length/114)*100}%`,borderRadius:8}}/>
         </div>
         <div style={{color:"#9ca3af",fontSize:12,textAlign:"right"}}>{nums.length}/114 · {Math.round(nums.length/114*100)}%</div>
       </div>
-
       {Object.keys(byJuz).length>0&&(
         <div style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:14,padding:16}}>
-          <div style={G.secTitle}><span>🗂️</span> By Juz</div>
+          <div style={G.sec}><span>🗂️</span> By Juz</div>
           <div style={{display:"flex",flexDirection:"column",gap:7,marginTop:10}}>
             {Object.entries(byJuz).sort((a,b)=>Number(a[0])-Number(b[0])).map(([j,cnt])=>{
               const total=SURAHS.filter(s=>s.j===Number(j)).length;
@@ -619,49 +672,35 @@ function StatsTab({mem,nums,due}) {
           </div>
         </div>
       )}
-
       {nums.length>0&&(
         <div style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:14,padding:16}}>
-          <div style={G.secTitle}><span>🔄</span> SM-2 Health</div>
+          <div style={G.sec}><span>🔄</span> SM-2 Health</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:10}}>
             <div style={{textAlign:"center"}}><div style={{fontSize:22,fontWeight:700,color:"#c9a84c"}}>{avgInt}d</div><div style={{fontSize:11,color:"#6b7280"}}>avg interval</div></div>
             <div style={{textAlign:"center"}}><div style={{fontSize:22,fontWeight:700,color:"#6ee7b7"}}>{nums.filter(n=>(mem[n].reps||0)>=3).length}</div><div style={{fontSize:11,color:"#6b7280"}}>well-established</div></div>
           </div>
         </div>
       )}
-
       {nums.length===0&&<div style={G.empty}><div style={{fontSize:36,marginBottom:10}}>📊</div><div style={{color:"#9ca3af",fontSize:13,textAlign:"center"}}>Stats appear once you add memorised surahs.</div></div>}
     </div>
   );
 }
 
-// ─── Shared Styles ─────────────────────────────────────────────────────────
 const G = {
-  goldBtn: {background:"linear-gradient(135deg,#c9a84c,#e8c55a)",color:"#0d1a0f",border:"none",borderRadius:11,padding:"11px 22px",fontSize:14,fontWeight:700,cursor:"pointer",width:"100%"},
-  secTitle: {display:"flex",alignItems:"center",gap:7,color:"#c9a84c",fontSize:12,fontWeight:700,letterSpacing:1,marginBottom:10,textTransform:"uppercase"},
-  empty: {background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:14,padding:"26px 18px",display:"flex",flexDirection:"column",alignItems:"center",textAlign:"center"},
-  row: {background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:12,padding:"12px 14px",display:"flex",alignItems:"center",gap:10},
-  qCard: {background:"rgba(255,255,255,0.03)",border:"1px solid rgba(201,168,76,0.14)",borderRadius:16,padding:18},
+  goldBtn:{background:"linear-gradient(135deg,#c9a84c,#e8c55a)",color:"#0d1a0f",border:"none",borderRadius:11,padding:"11px 22px",fontSize:14,fontWeight:700,cursor:"pointer",width:"100%"},
+  sec:{display:"flex",alignItems:"center",gap:7,color:"#c9a84c",fontSize:12,fontWeight:700,letterSpacing:1,marginBottom:10,textTransform:"uppercase"},
+  empty:{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:14,padding:"26px 18px",display:"flex",flexDirection:"column",alignItems:"center",textAlign:"center"},
+  row:{background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:12,padding:"12px 14px",display:"flex",alignItems:"center",gap:10},
+  qCard:{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(201,168,76,0.14)",borderRadius:16,padding:18},
 };
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
 </script>
-
-<!-- PWA Service Worker -->
 <script>
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    // Inline service worker as a blob — no separate sw.js file needed
-    const sw = `
-const C="hifdh-sw-v1";
-self.addEventListener("install",e=>e.waitUntil(caches.open(C).then(c=>c.add("/")).then(()=>self.skipWaiting())));
-self.addEventListener("activate",e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
-self.addEventListener("fetch",e=>{
-  if(e.request.url.includes("anthropic.com")||e.request.url.includes("cdnjs"))return;
-  e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request).catch(()=>r)));
-});`;
-    const blob = new Blob([sw], {type:'application/javascript'});
-    navigator.serviceWorker.register(URL.createObjectURL(blob)).catch(()=>{});
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>{
+    const sw=`const C="hifdh-v1";self.addEventListener("install",e=>e.waitUntil(caches.open(C).then(c=>c.add("/")).then(()=>self.skipWaiting())));self.addEventListener("activate",e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));self.addEventListener("fetch",e=>{if(e.request.url.includes("alquran.cloud")||e.request.url.includes("cdnjs"))return;e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request).catch(()=>r)));});`;
+    navigator.serviceWorker.register(URL.createObjectURL(new Blob([sw],{type:'application/javascript'}))).catch(()=>{});
   });
 }
 </script>
